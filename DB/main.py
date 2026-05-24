@@ -1,9 +1,37 @@
+import os
 from typing import Annotated
 
 from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlalchemy import LargeBinary, TypeDecorator
+from cryptography.fernet import Fernet
 
+# Encryption
+SECRET_KEY = str(os.getenv("FERNET_KEY"))
+cipher_suite = Fernet(SECRET_KEY.encode())
+
+class Encrypted(TypeDecorator):
+    impl = LargeBinary
+    cache_ok = True
+
+    def __init__(self, target_type):
+        super().__init__()
+        self.target_type = target_type
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        return cipher_suite.encrypt(str(value).encode())
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        decrypted = cipher_suite.decrypt(value).decode()
+        return self.target_type(decrypted)
+# End Encryption
+
+# Models
 class User(SQLModel):
     username : str = Field(index=True)
     password_hash : str = Field(index=True)
@@ -56,7 +84,6 @@ class DoctorUpdate(SQLModel):
     password_hash: str | None = None
     name: str | None = None
 
-
 class Appointment(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     patient_id: int | None = Field(default=None, foreign_key="patient.id")
@@ -86,38 +113,34 @@ class NotificationUpdate(SQLModel):
     contents: str | None = None
     read: bool | None = None
 
-class MedicalRecord(SQLModel, table=True):
+class MedicalRecordBase(SQLModel):
+    temperature: float = Field(sa_type=Encrypted(float))
+    weight: float = Field(sa_type=Encrypted(float))
+    height: float = Field(sa_type=Encrypted(float))
+    blood_pressure: int = Field(sa_type=Encrypted(int))
+    diagnostic: str = Field(sa_type=Encrypted(str))
+    prescription: str = Field(sa_type=Encrypted(str))
+    report: str = Field(sa_type=Encrypted(str))
+
+class MedicalRecord(MedicalRecordBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     patient_id: int | None = Field(default=None, foreign_key="patient.id")
     doctor_id: int | None = Field(default=None, foreign_key="doctor.id")
     date: datetime = Field(default_factory=datetime.now)
-    temperature: float
-    weight: float
-    height: float
-    blood_pressure: int
-    diagnostic: str
-    prescription: str
-    report: str
 
-class MedicalRecordCreate(SQLModel):
+class MedicalRecordCreate(MedicalRecordBase):
     patient_id: int | None = Field(default=None, foreign_key="patient.id")
     doctor_id: int | None = Field(default=None, foreign_key="doctor.id")
-    temperature: float
-    weight: float
-    height: float
-    blood_pressure: int
-    diagnostic: str
-    prescription: str
-    report: str
 
-class MedicalRecordUpdate(SQLModel):
-    temperature: float | None = None
-    weight: float | None = None
-    height: float | None = None
-    blood_pressure: int | None = None
-    diagnostic: str | None = None
-    prescription: str | None = None
-    report: str | None = None
+class MedicalRecordUpdate(MedicalRecordBase):
+    temperature: float | None = Field(default=None, sa_type=Encrypted(float))
+    weight: float | None = Field(default=None, sa_type=Encrypted(float))
+    height: float | None = Field(default=None, sa_type=Encrypted(float))
+    blood_pressure: int | None = Field(default=None, sa_type=Encrypted(int))
+    diagnostic: str | None = Field(default=None, sa_type=Encrypted(str))
+    prescription: str | None = Field(default=None, sa_type=Encrypted(str))
+    report: str | None = Field(default=None, sa_type=Encrypted(str))
+# End Models
 
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -131,7 +154,6 @@ def create_db_and_tables():
 def get_session():
     with Session(engine) as session:
         yield session
-
 
 SessionDep = Annotated[Session, Depends(get_session)]
 app = FastAPI()
@@ -348,6 +370,15 @@ def delete_notification(notification_id: int, session: SessionDep):
     return {"ok": True}
 # End Notifications
 
+'''
+    temperature: float
+    weight: float
+    height: float
+    blood_pressure: int
+    diagnostic: str
+    prescription: str
+    report: str
+'''
 
 # Medical records
 @app.post("/medical-records/", response_model=MedicalRecord)
@@ -369,7 +400,7 @@ def read_medical_records(
     )
     return records
 
-@app.get("/medical-records/{patient_id}", response_model=list[MedicalRecord])
+@app.get("/medical-records-patient/{patient_id}", response_model=list[MedicalRecord])
 def read_patient_medical_records(
     patient_id: int,
     session: SessionDep,
@@ -379,6 +410,24 @@ def read_patient_medical_records(
     statement = (
         select(MedicalRecord)
         .where(MedicalRecord.patient_id == patient_id)
+        .order_by(MedicalRecord.date)
+        .offset(offset)
+        .limit(limit)
+    )
+    records = session.exec(statement).all()
+
+    return records
+
+@app.get("/medical-records-doctor/{doctor_id}", response_model=list[MedicalRecord])
+def read_doctor_medical_records(
+    doctor_id: int,
+    session: SessionDep,
+    offset: int = 0,
+    limit: Annotated[int, Query(le=100)] = 100,
+):
+    statement = (
+        select(MedicalRecord)
+        .where(MedicalRecord.doctor_id == doctor_id)
         .order_by(MedicalRecord.date)
         .offset(offset)
         .limit(limit)
