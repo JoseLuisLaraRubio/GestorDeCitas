@@ -60,13 +60,16 @@ class DoctorUpdate(SQLModel):
 class Appointment(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     patient_id: int | None = Field(default=None, foreign_key="patient.id")
+    doctor_id: int | None = Field(default=None, foreign_key="doctor.id")
     date: datetime
 
 class AppointmentCreate(SQLModel):
     patient_id: int | None = Field(default=None, foreign_key="patient.id")
+    doctor_id: int | None = Field(default=None, foreign_key="doctor.id")
     date: datetime
 
 class AppointmentUpdate(SQLModel):
+    doctor_id: int | None = Field(default=None, foreign_key="doctor.id")
     date: datetime  | None = None
 
 class Notification(SQLModel, table=True):
@@ -151,7 +154,7 @@ def read_all_appointments(session: SessionDep, limit:Annotated[int, Query(le=100
     appointments = session.exec(statement).all()
     return appointments
 
-@app.get("/appointments/{patient_id}", response_model=list[Appointment])
+@app.get("/appointments-patient/{patient_id}", response_model=list[Appointment])
 def read_patient_appointments(
     patient_id: int,
     session: SessionDep,
@@ -161,6 +164,23 @@ def read_patient_appointments(
     statement = (
         select(Appointment)
         .where(Appointment.patient_id == patient_id)
+        .order_by(Appointment.date)
+        .offset(offset)
+        .limit(limit)
+    )
+    appointments = session.exec(statement).all()
+    return appointments
+
+@app.get("/appointments-doctor/{doctor_id}", response_model=list[Appointment])
+def read_doctor_appointment(
+    doctor_id: int,
+    session: SessionDep,
+    offset: int = 0,
+    limit: Annotated[int, Query(le=100)] = 100,
+):
+    statement = (
+        select(Appointment)
+        .where(Appointment.doctor_id == doctor_id)
         .order_by(Appointment.date)
         .offset(offset)
         .limit(limit)
