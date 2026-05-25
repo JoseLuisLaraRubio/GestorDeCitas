@@ -582,6 +582,7 @@ async def doctor_update_record(
 	if not payload:
 		return _redirect("/doctor", request, "No updates provided.", "error")
 
+	token = request.session.get("token")
 	try:
 		resp = await _api_request(
 			"PATCH",
