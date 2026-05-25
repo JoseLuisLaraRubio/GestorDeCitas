@@ -1,5 +1,5 @@
 import os
-from dotenv import load_dotenv
+from pathlib import Path
 from typing import Annotated
 
 from datetime import datetime
@@ -10,9 +10,32 @@ from sqlalchemy.exc import IntegrityError
 from cryptography.fernet import Fernet
 
 # Encryption
-load_dotenv()
+def _load_env_value(key: str) -> str | None:
+    value = os.getenv(key)
+    if value:
+        return value
 
-FERNET_KEY = str(os.getenv("FERNET_KEY"))
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates = [repo_root / ".env", repo_root / "API" / ".env"]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        for line in candidate.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            name, raw_value = stripped.split("=", 1)
+            if name.strip() == key:
+                return raw_value.strip().strip("\"'")
+    return None
+
+
+FERNET_KEY = _load_env_value("FERNET_KEY")
+if not FERNET_KEY:
+    raise RuntimeError(
+        "FERNET_KEY is not set. Define it in the environment or API/.env before starting the DB service."
+    )
+
 cipher_suite = Fernet(FERNET_KEY.encode())
 
 class Encrypted(TypeDecorator):
