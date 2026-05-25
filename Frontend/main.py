@@ -8,20 +8,16 @@ from fastapi import FastAPI, Form, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jose import JWTError, jwt
-from pwdlib import PasswordHash
 from starlette.middleware.sessions import SessionMiddleware
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
-DB_BASE_URL = os.getenv("DB_BASE_URL", "http://127.0.0.1:8001")
 SESSION_SECRET = os.getenv("FRONTEND_SESSION_SECRET", "frontend_dev_secret")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "SUPER_SECRET_DISTRIBUTED_SYSTEMS_UADY_KEY")
 ALGORITHM = "HS256"
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
-password_hash_helper = PasswordHash.recommended()
 
 app = FastAPI(title="Frontend - Appointment Manager")
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
@@ -116,11 +112,6 @@ async def _api_request(method: str, path: str, token: Optional[str] = None, **kw
 		headers["Authorization"] = f"Bearer {token}"
 	async with httpx.AsyncClient(timeout=10) as client:
 		return await client.request(method, f"{API_BASE_URL}{path}", headers=headers, **kwargs)
-
-
-async def _db_request(method: str, path: str, **kwargs):
-	async with httpx.AsyncClient(timeout=10) as client:
-		return await client.request(method, f"{DB_BASE_URL}{path}", **kwargs)
 
 
 @app.get("/")
@@ -223,13 +214,13 @@ async def register_doctor(
 ):
 	payload = {
 		"username": username,
-		"password_hash": password_hash_helper.hash(password),
+		"password": password,
 		"name": name,
 	}
 	try:
-		resp = await _db_request("POST", "/doctors/", json=payload)
+		resp = await _api_request("POST", "/doctors/", json=payload)
 	except httpx.RequestError:
-		return _redirect("/", request, "DB layer is unreachable.", "error")
+		return _redirect("/", request, "API is unreachable.", "error")
 
 	if resp.status_code not in (200, 201):
 		return _redirect("/", request, "Doctor registration failed.", "error")
@@ -277,7 +268,7 @@ async def patient_dashboard(request: Request, doctor_id: Optional[int] = None,
 		_add_flash(request, "Unable to load medical records.", "error")
 
 	try:
-		resp = await _db_request("GET", "/doctors/")
+		resp = await _api_request("GET", "/doctors/", token=token)
 		if resp.status_code == 200:
 			doctors = resp.json()
 	except httpx.RequestError:
@@ -285,7 +276,9 @@ async def patient_dashboard(request: Request, doctor_id: Optional[int] = None,
 
 	if doctor_id and date:
 		try:
-			resp = await _db_request("GET", f"/appointments-doctor/{doctor_id}")
+			resp = await _api_request(
+				"GET", f"/appointments/doctor/{doctor_id}", token=token
+			)
 			if resp.status_code == 200:
 				available_slots = _available_slots(date, resp.json())
 		except httpx.RequestError:
@@ -399,10 +392,13 @@ async def patient_delete_notification(request: Request, notification_id: int):
 	if not user:
 		return _redirect("/", request, "Please sign in as a patient.", "error")
 
+	token = request.session.get("token")
 	try:
-		resp = await _db_request("DELETE", f"/notifications/{notification_id}")
+		resp = await _api_request(
+			"DELETE", f"/notifications/{notification_id}", token=token
+		)
 	except httpx.RequestError:
-		return _redirect("/patient", request, "DB layer is unreachable.", "error")
+		return _redirect("/patient", request, "API is unreachable.", "error")
 
 	if resp.status_code not in (200, 204):
 		return _redirect("/patient", request, "Unable to delete notification.", "error")
@@ -439,7 +435,11 @@ async def doctor_dashboard(request: Request, patient_id: Optional[int] = None):
 		_add_flash(request, "Unable to load patients.", "error")
 
 	try:
-		resp = await _db_request("GET", f"/medical-records-doctor/{user['internal_id']}")
+		resp = await _api_request(
+			"GET",
+			f"/medical-records-doctor/{user['internal_id']}",
+			token=token,
+		)
 		if resp.status_code == 200:
 			records = resp.json()
 	except httpx.RequestError:
@@ -583,11 +583,14 @@ async def doctor_update_record(
 		return _redirect("/doctor", request, "No updates provided.", "error")
 
 	try:
-		resp = await _db_request(
-			"PATCH", f"/medical-records/{record_id_int}", json=payload
+		resp = await _api_request(
+			"PATCH",
+			f"/medical-records/{record_id_int}",
+			token=token,
+			json=payload,
 		)
 	except httpx.RequestError:
-		return _redirect("/doctor", request, "DB layer is unreachable.", "error")
+		return _redirect("/doctor", request, "API is unreachable.", "error")
 
 	if resp.status_code not in (200, 201):
 		return _redirect("/doctor", request, "Unable to update record.", "error")

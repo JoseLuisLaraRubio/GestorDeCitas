@@ -45,6 +45,11 @@ class PatientUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
 
+class DoctorRegistration(BaseModel):
+    username: str
+    password: str
+    name: str
+
 class AppointmentRequest(BaseModel):
     patient_id: int
     doctor_id: int
@@ -63,6 +68,15 @@ class MedicalRecordRequest(BaseModel):
     diagnostic: str
     prescription: str
     report: str
+
+class MedicalRecordUpdate(BaseModel):
+    temperature: Optional[float] = None
+    weight: Optional[float] = None
+    height: Optional[float] = None
+    blood_pressure: Optional[int] = None
+    diagnostic: Optional[str] = None
+    prescription: Optional[str] = None
+    report: Optional[str] = None
 
 
 # Helpers
@@ -342,6 +356,30 @@ async def delete_patient(patient_id: int, current_user: dict = Depends(get_curre
         return {"status": "Purged safely from persistent storage tier."}
 # End Patients
 
+# Doctors
+@app.post("/doctors/", status_code=201)
+async def register_doctor(doctor: DoctorRegistration):
+    hashed_password = get_password_hash(doctor.password)
+    db_payload = {
+        "username": doctor.username,
+        "password_hash": hashed_password,
+        "name": doctor.name,
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(f"{DB_LAYER_URL}/doctors/", json=db_payload)
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=resp.status_code, detail="Failed to create doctor profile in DB.")
+        return resp.json()
+
+@app.get("/doctors/")
+async def list_doctors(current_user: dict = Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{DB_LAYER_URL}/doctors/")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to read doctors.")
+        return resp.json()
+# End Doctors
+
 # Appointments
 @app.post("/appointments/", status_code=201)
 async def schedule_appointment(appointment: AppointmentRequest, current_user: dict = Depends(get_current_user)):
@@ -393,7 +431,13 @@ async def list_patient_appointments(patient_id: int, current_user: dict = Depend
         return resp.json()
 
 @app.get("/appointments/doctor/{doctor_id}")
-async def list_doctor_appointments(doctor_id: int, current_user: dict = Depends(verify_doctor)):
+async def list_doctor_appointments(doctor_id: int, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] == "doctor" and current_user["internal_id"] != doctor_id:
+        raise HTTPException(status_code=403, detail="Access denied to other doctor schedules.")
+    if current_user["role"] not in ("doctor", "patient"):
+        raise HTTPException(status_code=403, detail="Access denied.")
+    await ensure_doctor_exists(doctor_id)
+
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{DB_LAYER_URL}/appointments-doctor/{doctor_id}")
         if resp.status_code != 200:
@@ -488,6 +532,43 @@ async def add_medical_record(record: MedicalRecordRequest, current_user: dict = 
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Could not store clinical notes securely.")
         return {"status": "Success. Notes stored securely."}
+
+@app.get("/medical-records-doctor/{doctor_id}")
+async def list_doctor_medical_records(doctor_id: int, current_user: dict = Depends(verify_doctor)):
+    if current_user["internal_id"] != doctor_id:
+        raise HTTPException(status_code=403, detail="Access denied to other doctor records.")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{DB_LAYER_URL}/medical-records-doctor/{doctor_id}")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to read medical records.")
+        return resp.json()
+
+@app.patch("/medical-records/{record_id}")
+async def update_medical_record(
+    record_id: int,
+    record: MedicalRecordUpdate,
+    current_user: dict = Depends(verify_doctor),
+):
+    payload = record.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="No updates provided.")
+
+    async with httpx.AsyncClient() as client:
+        existing_resp = await client.get(f"{DB_LAYER_URL}/medical-records/{record_id}")
+        if existing_resp.status_code == 404:
+            raise HTTPException(status_code=404, detail="Medical record not found.")
+        if existing_resp.status_code != 200:
+            raise HTTPException(status_code=existing_resp.status_code, detail="Failed to read medical record.")
+        existing = existing_resp.json()
+        if existing.get("doctor_id") != current_user["internal_id"]:
+            raise HTTPException(status_code=403, detail="Access denied to this medical record.")
+
+        resp = await client.patch(f"{DB_LAYER_URL}/medical-records/{record_id}", json=payload)
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404, detail="Medical record not found.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to update medical record.")
+        return resp.json()
 # End Medical Records
 
 # Reports and notifications
@@ -537,5 +618,29 @@ async def view_notifications(current_user: dict = Depends(get_current_user)):
         if resp.status_code != 200:
             return []
         return [n for n in resp.json() if n["patient_id"] == current_user["internal_id"]]
+
+@app.delete("/notifications/{notification_id}")
+async def delete_notification(notification_id: int, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "patient":
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    async with httpx.AsyncClient() as client:
+        list_resp = await client.get(f"{DB_LAYER_URL}/notifications/")
+        if list_resp.status_code != 200:
+            raise HTTPException(status_code=list_resp.status_code, detail="Failed to read notifications.")
+
+        notifications = list_resp.json()
+        target = next((n for n in notifications if n.get("id") == notification_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="Notification not found.")
+        if target.get("patient_id") != current_user["internal_id"]:
+            raise HTTPException(status_code=403, detail="Access denied to this notification.")
+
+        resp = await client.delete(f"{DB_LAYER_URL}/notifications/{notification_id}")
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404, detail="Notification not found.")
+        if resp.status_code not in (200, 204):
+            raise HTTPException(status_code=resp.status_code, detail="Failed to delete notification.")
+        return {"status": "Notification deleted successfully."}
 
 # End Reports and notifications
