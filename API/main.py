@@ -1,7 +1,5 @@
 import os
 import datetime
-import sqlite3
-from pathlib import Path
 from typing import Optional
 import httpx
 
@@ -13,15 +11,11 @@ from pwdlib import PasswordHash
 
 # Config
 DB_LAYER_URL = os.getenv("DB_LAYER_URL", "http://127.0.0.1:8001")
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SQLITE_PATH = REPO_ROOT / "database.db"
-DB_SQLITE_PATH = Path(os.getenv("DB_SQLITE_PATH", str(DEFAULT_SQLITE_PATH)))
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "SUPER_SECRET_DISTRIBUTED_SYSTEMS_UADY_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 AUTH_ENDPOINT_BY_ROLE = {"patient": "patients-auth", "doctor": "doctors-auth"}
-AUTH_TABLE_BY_ROLE = {"patient": "patient", "doctor": "doctor"}
 
 password_hash_helper = PasswordHash.recommended()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -92,40 +86,23 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def _sqlite_lookup_user(table: str, username: str) -> Optional[dict]:
-    if not DB_SQLITE_PATH.exists():
-        return None
-    connection = sqlite3.connect(DB_SQLITE_PATH)
-    try:
-        cursor = connection.execute(
-            f"SELECT id, username, password_hash FROM {table} WHERE username = ? LIMIT 1",
-            (username,),
-        )
-        row = cursor.fetchone()
-    finally:
-        connection.close()
-    if not row:
-        return None
-    return {"id": row[0], "username": row[1], "password_hash": row[2]}
-
 async def _fetch_auth_record(role: str, username: str) -> Optional[dict]:
     endpoint = AUTH_ENDPOINT_BY_ROLE[role]
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{DB_LAYER_URL}/{endpoint}/{username}")
     except httpx.RequestError:
-        resp = None
+        raise HTTPException(status_code=503, detail="DB layer unreachable for authentication.")
 
-    if resp is not None:
-        if resp.status_code == 200:
-            payload = resp.json()
-            if "password_hash" in payload and "id" in payload:
-                return payload
-        if resp.status_code not in (404, 405):
-            raise HTTPException(status_code=resp.status_code, detail="Failed to read user credentials.")
+    if resp.status_code == 200:
+        payload = resp.json()
+        if "password_hash" in payload and "id" in payload:
+            return payload
+        raise HTTPException(status_code=500, detail="Invalid auth payload from DB layer.")
+    if resp.status_code == 404:
+        return None
 
-    table = AUTH_TABLE_BY_ROLE[role]
-    return _sqlite_lookup_user(table, username)
+    raise HTTPException(status_code=resp.status_code, detail="Failed to read user credentials.")
 
 def ensure_valid_appointment_time(target: datetime.datetime):
     if target.minute != 0 or target.second != 0 or target.microsecond != 0:

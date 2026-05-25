@@ -1,15 +1,19 @@
 import os
+from dotenv import load_dotenv
 from typing import Annotated
 
 from datetime import datetime
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlmodel import Field, Session, SQLModel, create_engine, select
-from sqlalchemy import LargeBinary, TypeDecorator
+from sqlalchemy import LargeBinary, TypeDecorator, UniqueConstraint
+from sqlalchemy.exc import IntegrityError
 from cryptography.fernet import Fernet
 
 # Encryption
-SECRET_KEY = str(os.getenv("FERNET_KEY"))
-cipher_suite = Fernet(SECRET_KEY.encode())
+load_dotenv()
+
+FERNET_KEY = str(os.getenv("FERNET_KEY"))
+cipher_suite = Fernet(FERNET_KEY.encode())
 
 class Encrypted(TypeDecorator):
     impl = LargeBinary
@@ -85,6 +89,9 @@ class DoctorUpdate(SQLModel):
     name: str | None = None
 
 class Appointment(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("doctor_id", "date"),
+    )
     id: int | None = Field(default=None, primary_key=True)
     patient_id: int | None = Field(default=None, foreign_key="patient.id")
     doctor_id: int | None = Field(default=None, foreign_key="doctor.id")
@@ -214,7 +221,14 @@ def read_doctor_appointment(
 def create_appointment(appointment: AppointmentCreate, session: SessionDep):
     db_appointment = Appointment.model_validate(appointment)
     session.add(db_appointment)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This specific window has already been reserved.",
+        )
     session.refresh(db_appointment)
     return db_appointment
 
@@ -228,7 +242,14 @@ def update_appointment(
     appointment_data = appointment.model_dump(exclude_unset=True)
     appointment_db.sqlmodel_update(appointment_data)
     session.add(appointment_db)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This specific window has already been reserved.",
+        )
     session.refresh(appointment_db)
     return appointment_db
 
@@ -268,6 +289,18 @@ def read_patient(patient_id: int, session: SessionDep):
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     return patient
+
+@app.get("/patients-auth/{username}")
+def read_patient_auth(username: str, session: SessionDep):
+    statement = select(Patient).where(Patient.username == username).limit(1)
+    patient = session.exec(statement).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return {
+        "id": patient.id,
+        "username": patient.username,
+        "password_hash": patient.password_hash,
+    }
 
 @app.patch("/patients/{patient_id}", response_model=PatientPublic)
 def update_patient(patient_id: int, patient: PatientUpdate, session: SessionDep):
@@ -316,6 +349,18 @@ def read_doctor(doctor_id: int, session: SessionDep):
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     return doctor
+
+@app.get("/doctors-auth/{username}")
+def read_doctor_auth(username: str, session: SessionDep):
+    statement = select(Doctor).where(Doctor.username == username).limit(1)
+    doctor = session.exec(statement).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    return {
+        "id": doctor.id,
+        "username": doctor.username,
+        "password_hash": doctor.password_hash,
+    }
 
 @app.patch("/doctors/{doctor_id}", response_model=DoctorPublic)
 def update_doctor(doctor_id: int, doctor: DoctorUpdate, session: SessionDep):
