@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="grid two">
+  <div class="card">
+    <h2>Patient access</h2>
+    <p class="muted">Log in to manage your appointments and records.</p>
+    <form method="post" action="/auth/login">
+      <input type="hidden" name="role" value="patient" />
+      <label>Username</label>
+      <input name="username" required />
+      <label>Password</label>
+      <input type="password" name="password" required />
+      <button type="submit">Log in as patient</button>
+    </form>
+    <hr />
+    <h3>Create patient account</h3>
+    <form method="post" action="/auth/patient/register">
+      <label>Username</label>
+      <input name="username" required />
+      <label>Password</label>
+      <input type="password" name="password" required />
+      <label>Name</label>
+      <input name="name" required />
+      <div class="inline">
+        <div style="flex:1;">
+          <label>Age</label>
+          <input type="number" name="age" min="0" required />
+        </div>
+        <div style="flex:1;">
+          <label>Sex</label>
+          <input name="sex" required />
+        </div>
+      </div>
+      <label>Phone</label>
+      <input name="phone" required />
+      <label>Address</label>
+      <input name="address" required />
+      <button type="submit" class="secondary">Create patient</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Doctor access</h2>
+    <p class="muted">Doctor accounts are open for test users.</p>
+    <form method="post" action="/auth/login">
+      <input type="hidden" name="role" value="doctor" />
+      <label>Username</label>
+      <input name="username" required />
+      <label>Password</label>
+      <input type="password" name="password" required />
+      <button type="submit">Log in as doctor</button>
+    </form>
+    <hr />
+    <h3>Create doctor account</h3>
+    <form method="post" action="/auth/doctor/register">
+      <label>Username</label>
+      <input name="username" required />
+      <label>Password</label>
+      <input type="password" name="password" required />
+      <label>Name</label>
+      <input name="name" required />
+      <button type="submit" class="secondary">Create doctor</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title if title else "Appointment Manager" }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@300;600;700&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #1f1b16;
+      --surface: #f6f1ea;
+      --card: #ffffff;
+      --accent: #c4552f;
+      --accent-soft: #f6d3c7;
+      --sage: #2f5d50;
+      --mist: #f3e9dc;
+      --shadow: 0 18px 50px rgba(22, 16, 12, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 10% 20%, #fef6ef 0%, #f6efe7 40%, #e9e1d6 100%);
+      min-height: 100vh;
+    }
+
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 18px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.8);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+    }
+
+    .brand {
+      font-family: "Fraunces", serif;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .tagline {
+      font-size: 14px;
+      opacity: 0.7;
+    }
+
+    .userbox {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .pill {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .ghost {
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      padding: 6px 14px;
+      border-radius: 999px;
+      text-decoration: none;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .flash-list {
+      margin: 18px 0 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .flash {
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: #fff3e6;
+      border: 1px solid #f0c6b3;
+      font-size: 14px;
+    }
+
+    .flash.success {
+      background: #e6f4ee;
+      border-color: #b9e0ce;
+    }
+
+    .flash.error {
+      background: #fdecea;
+      border-color: #f3b7ae;
+    }
+
+    main {
+      margin-top: 28px;
+      display: grid;
+      gap: 24px;
+      animation: rise 0.6s ease;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h1, h2, h3 {
+      font-family: "Fraunces", serif;
+      margin: 0 0 12px;
+    }
+
+    h1 {
+      font-size: 36px;
+    }
+
+    h2 {
+      font-size: 24px;
+    }
+
+    h3 {
+      font-size: 18px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .two {
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::after {
+      content: "";
+      position: absolute;
+      inset: auto -40px -60px auto;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(196, 85, 47, 0.2), transparent 65%);
+      pointer-events: none;
+    }
+
+    form {
+      display: grid;
+      gap: 12px;
+    }
+
+    label {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+      opacity: 0.7;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      font-family: inherit;
+      background: #fffaf6;
+    }
+
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: var(--sage);
+    }
+
+    button.outline {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid rgba(0, 0, 0, 0.18);
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .item {
+      padding: 12px;
+      border-radius: 14px;
+      background: var(--mist);
+      display: grid;
+      gap: 8px;
+    }
+
+    .item-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .muted {
+      opacity: 0.7;
+      font-size: 13px;
+    }
+
+    .inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .slot-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .slot-list label {
+      text-transform: none;
+      letter-spacing: 0.02em;
+      font-weight: 500;
+      opacity: 1;
+    }
+
+    .slot {
+      background: #fff4ed;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px dashed rgba(0, 0, 0, 0.1);
+    }
+
+    .footer-note {
+      font-size: 12px;
+      opacity: 0.6;
+    }
+
+    @media (max-width: 720px) {
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      h1 {
+        font-size: 30px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <div class="brand">Gestor de citas - Sistemas Distribuidos</div>
+        <div class="tagline">Jose Luis Lara Rubio y Mateo Ortiz Chay</div>
+      </div>
+      {% if user %}
+      <div class="userbox">
+        <span class="pill">{{ user.role }}</span>
+        <span>{{ user.username }}</span>
+        <a class="ghost" href="/logout">Logout</a>
+      </div>
+      {% endif %}
+    </header>
+
+    {% if flash %}
+    <div class="flash-list">
+      {% for item in flash %}
+      <div class="flash {{ item.level }}">{{ item.message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

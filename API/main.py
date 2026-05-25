@@ -1,5 +1,7 @@
 import os
 import datetime
+import sqlite3
+from pathlib import Path
 from typing import Optional
 import httpx
 
@@ -11,9 +13,15 @@ from pwdlib import PasswordHash
 
 # Config
 DB_LAYER_URL = os.getenv("DB_LAYER_URL", "http://127.0.0.1:8001")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SQLITE_PATH = REPO_ROOT / "database.db"
+DB_SQLITE_PATH = Path(os.getenv("DB_SQLITE_PATH", str(DEFAULT_SQLITE_PATH)))
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "SUPER_SECRET_DISTRIBUTED_SYSTEMS_UADY_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+AUTH_ENDPOINT_BY_ROLE = {"patient": "patients-auth", "doctor": "doctors-auth"}
+AUTH_TABLE_BY_ROLE = {"patient": "patient", "doctor": "doctor"}
 
 password_hash_helper = PasswordHash.recommended()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -70,20 +78,123 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+def _sqlite_lookup_user(table: str, username: str) -> Optional[dict]:
+    if not DB_SQLITE_PATH.exists():
+        return None
+    connection = sqlite3.connect(DB_SQLITE_PATH)
+    try:
+        cursor = connection.execute(
+            f"SELECT id, username, password_hash FROM {table} WHERE username = ? LIMIT 1",
+            (username,),
+        )
+        row = cursor.fetchone()
+    finally:
+        connection.close()
+    if not row:
+        return None
+    return {"id": row[0], "username": row[1], "password_hash": row[2]}
+
+async def _fetch_auth_record(role: str, username: str) -> Optional[dict]:
+    endpoint = AUTH_ENDPOINT_BY_ROLE[role]
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{DB_LAYER_URL}/{endpoint}/{username}")
+    except httpx.RequestError:
+        resp = None
+
+    if resp is not None:
+        if resp.status_code == 200:
+            payload = resp.json()
+            if "password_hash" in payload and "id" in payload:
+                return payload
+        if resp.status_code not in (404, 405):
+            raise HTTPException(status_code=resp.status_code, detail="Failed to read user credentials.")
+
+    table = AUTH_TABLE_BY_ROLE[role]
+    return _sqlite_lookup_user(table, username)
+
 def ensure_valid_appointment_time(target: datetime.datetime):
     if target.minute != 0 or target.second != 0 or target.microsecond != 0:
         raise HTTPException(status_code=400, detail="Appointments must start on the hour.")
     if target.hour < 9 or target.hour >= 19:
         raise HTTPException(status_code=400, detail="Appointments must start between 09:00 and 18:00.")
 
-async def fetch_appointment_or_404(appointment_id: int) -> dict:
+def _normalize_datetime(value) -> datetime.datetime:
+    if isinstance(value, datetime.datetime):
+        normalized = value
+    else:
+        try:
+            normalized = datetime.datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid appointment date format.")
+    if normalized.tzinfo is not None:
+        normalized = normalized.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return normalized
+
+async def _find_appointment_in_list(
+    client: httpx.AsyncClient, url: str, appointment_id: int
+) -> Optional[dict]:
+    resp = await client.get(url)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Failed to read appointments.")
+    for appointment in resp.json():
+        if appointment.get("id") == appointment_id:
+            return appointment
+    return None
+
+async def ensure_appointment_slot_available(
+    doctor_id: int, target_date: datetime.datetime, exclude_id: Optional[int] = None
+) -> None:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{DB_LAYER_URL}/appointments-doctor/{doctor_id}")
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail="Failed to validate appointment availability.",
+            )
+        target = _normalize_datetime(target_date)
+        for appointment in resp.json():
+            if appointment.get("id") == exclude_id:
+                continue
+            if _normalize_datetime(appointment.get("date")) == target:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This specific window has already been reserved.",
+                )
+
+async def fetch_appointment_or_404(
+    appointment_id: int, current_user: Optional[dict] = None
+) -> dict:
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{DB_LAYER_URL}/appointments/{appointment_id}")
-        if resp.status_code == 404:
-            raise HTTPException(status_code=404, detail="Appointment not found.")
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            return resp.json()
+        if resp.status_code not in (404, 405):
             raise HTTPException(status_code=resp.status_code, detail="Failed to read appointment.")
-        return resp.json()
+
+        appointment = await _find_appointment_in_list(
+            client, f"{DB_LAYER_URL}/appointments/", appointment_id
+        )
+        if appointment is not None:
+            return appointment
+
+        if current_user:
+            if current_user["role"] == "patient":
+                appointment = await _find_appointment_in_list(
+                    client,
+                    f"{DB_LAYER_URL}/appointments-patient/{current_user['internal_id']}",
+                    appointment_id,
+                )
+            elif current_user["role"] == "doctor":
+                appointment = await _find_appointment_in_list(
+                    client,
+                    f"{DB_LAYER_URL}/appointments-doctor/{current_user['internal_id']}",
+                    appointment_id,
+                )
+            if appointment is not None:
+                return appointment
+
+        raise HTTPException(status_code=404, detail="Appointment not found.")
 
 async def ensure_patient_exists(patient_id: int) -> None:
     async with httpx.AsyncClient() as client:
@@ -130,34 +241,31 @@ app = FastAPI(title="Business Logic Layer - Appointment Manager (Pwdlib Migratio
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """Authenticates both Doctors and Patients securely via pwdlib."""
-    async with httpx.AsyncClient() as client:
-        p_resp = await client.get(f"{DB_LAYER_URL}/patients-auth/{form_data.username}")
-        if p_resp.status_code == 200:
-            patient = p_resp.json()
-            try:
-                if verify_password(form_data.password, patient["password_hash"]):
-                    token = create_access_token({
-                        "sub": patient["username"],
-                        "role": "patient",
-                        "internal_id": patient["id"],
-                    })
-                    return {"access_token": token, "token_type": "bearer"}
-            except Exception:
-                pass
-        
-        d_resp = await client.get(f"{DB_LAYER_URL}/doctors-auth/{form_data.username}")
-        if d_resp.status_code == 200:
-            doctor = d_resp.json()
-            try:
-                if verify_password(form_data.password, doctor["password_hash"]):
-                    token = create_access_token({
-                        "sub": doctor["username"],
-                        "role": "doctor",
-                        "internal_id": doctor["id"],
-                    })
-                    return {"access_token": token, "token_type": "bearer"}
-            except Exception:
-                pass
+    patient = await _fetch_auth_record("patient", form_data.username)
+    if patient:
+        try:
+            if verify_password(form_data.password, patient["password_hash"]):
+                token = create_access_token({
+                    "sub": patient["username"],
+                    "role": "patient",
+                    "internal_id": patient["id"],
+                })
+                return {"access_token": token, "token_type": "bearer"}
+        except Exception:
+            pass
+
+    doctor = await _fetch_auth_record("doctor", form_data.username)
+    if doctor:
+        try:
+            if verify_password(form_data.password, doctor["password_hash"]):
+                token = create_access_token({
+                    "sub": doctor["username"],
+                    "role": "doctor",
+                    "internal_id": doctor["id"],
+                })
+                return {"access_token": token, "token_type": "bearer"}
+        except Exception:
+            pass
                     
     raise HTTPException(status_code=400, detail="Invalid username or password credentials.")
 
@@ -243,6 +351,7 @@ async def schedule_appointment(appointment: AppointmentRequest, current_user: di
     ensure_valid_appointment_time(appointment.date)
     await ensure_patient_exists(appointment.patient_id)
     await ensure_doctor_exists(appointment.doctor_id)
+    await ensure_appointment_slot_available(appointment.doctor_id, appointment.date)
     date_str = appointment.date.isoformat()
 
     async with httpx.AsyncClient() as client:
@@ -268,7 +377,7 @@ async def schedule_appointment(appointment: AppointmentRequest, current_user: di
 
 @app.get("/appointments/{appointment_id}")
 async def get_appointment(appointment_id: int, current_user: dict = Depends(get_current_user)):
-    appointment = await fetch_appointment_or_404(appointment_id)
+    appointment = await fetch_appointment_or_404(appointment_id, current_user)
     if current_user["role"] == "patient" and current_user["internal_id"] != appointment["patient_id"]:
         raise HTTPException(status_code=403, detail="Unauthorized appointment access.")
     return appointment
@@ -297,20 +406,32 @@ async def update_appointment(
     appointment: AppointmentUpdate,
     current_user: dict = Depends(get_current_user),
 ):
-    current = await fetch_appointment_or_404(appointment_id)
+    current = await fetch_appointment_or_404(appointment_id, current_user)
     if current_user["role"] == "patient" and current_user["internal_id"] != current["patient_id"]:
         raise HTTPException(status_code=403, detail="Unauthorized appointment access.")
 
     payload = appointment.model_dump(exclude_unset=True)
     if current_user["role"] == "patient" and "doctor_id" in payload:
         raise HTTPException(status_code=403, detail="Patients cannot change doctor assignment.")
+
+    target_date = None
     if "date" in payload:
         if appointment.date is None:
             raise HTTPException(status_code=400, detail="Appointment date is required.")
         ensure_valid_appointment_time(appointment.date)
+        target_date = appointment.date
         payload["date"] = appointment.date.isoformat()
     if "doctor_id" in payload and payload["doctor_id"] is not None:
         await ensure_doctor_exists(payload["doctor_id"])
+
+    if "date" in payload or "doctor_id" in payload:
+        resolved_date = target_date or _normalize_datetime(current["date"])
+        resolved_doctor = payload.get("doctor_id", current["doctor_id"])
+        await ensure_appointment_slot_available(
+            resolved_doctor,
+            resolved_date,
+            exclude_id=appointment_id,
+        )
 
     async with httpx.AsyncClient() as client:
         resp = await client.patch(f"{DB_LAYER_URL}/appointments/{appointment_id}", json=payload)
@@ -331,7 +452,7 @@ async def update_appointment(
 
 @app.delete("/appointments/{appointment_id}")
 async def cancel_appointment(appointment_id: int, current_user: dict = Depends(get_current_user)):
-    target_appt = await fetch_appointment_or_404(appointment_id)
+    target_appt = await fetch_appointment_or_404(appointment_id, current_user)
     if current_user["role"] == "patient" and current_user["internal_id"] != target_appt["patient_id"]:
         raise HTTPException(status_code=403, detail="Unauthorized cancellation access.")
 

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Doctor console</h1>
+  <p class="muted">Manage appointments and update medical records.</p>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Upcoming appointments</h2>
+    <div class="stack">
+      {% if appointments %}
+        {% for appointment in appointments %}
+        <div class="item">
+          <div>
+            <strong>{{ appointment.date | replace("T", " ") }}</strong>
+            <div class="muted">Patient: {{ patient_lookup.get(appointment.patient_id, {}).get("name", "Unknown") }}</div>
+          </div>
+          <form method="post" action="/doctor/appointments/{{ appointment.id }}/cancel">
+            <button type="submit" class="outline">Cancel</button>
+          </form>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="muted">No upcoming appointments.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Create medical record</h2>
+    <form method="post" action="/doctor/records" id="record-form">
+      <label>Patient</label>
+      <select name="patient_id" required>
+        <option value="">Select patient</option>
+        {% for patient in patients %}
+          <option value="{{ patient.id }}">{{ patient.name }} ({{ patient.username }})</option>
+        {% endfor %}
+      </select>
+      <div class="inline">
+        <div style="flex:1;">
+          <label>Temperature</label>
+          <input id="temp" name="temperature" type="number" step="0.1" required />
+        </div>
+        <div style="flex:1;">
+          <label>Weight</label>
+          <input id="weight" name="weight" type="number" step="0.1" required />
+        </div>
+      </div>
+      <div class="inline">
+        <div style="flex:1;">
+          <label>Height</label>
+          <input id="height" name="height" type="number" step="0.01" required />
+        </div>
+        <div style="flex:1;">
+          <label>Blood pressure</label>
+          <input id="bp" name="blood_pressure" type="number" step="1" required />
+        </div>
+      </div>
+      <label>Diagnostic</label>
+      <textarea id="diagnostic" name="diagnostic" required></textarea>
+      <label>Prescription</label>
+      <textarea id="prescription" name="prescription" required></textarea>
+      <label>Report</label>
+      <textarea id="report" name="report" required></textarea>
+      <div class="inline">
+        <button type="button" class="outline" onclick="fillMockData()">Mock data</button>
+        <button type="submit">Create record</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Patient history lookup</h2>
+    <form method="get" action="/doctor">
+      <label>Patient</label>
+      <select name="patient_id" required>
+        <option value="">Select patient</option>
+        {% for patient in patients %}
+          <option value="{{ patient.id }}" {% if selected_patient_id == patient.id %}selected{% endif %}>
+            {{ patient.name }} ({{ patient.username }})
+          </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="secondary">View history</button>
+    </form>
+    {% if history %}
+      <div class="stack" style="margin-top: 16px;">
+        <div class="item">
+          <strong>{{ history.header.patient_name }}</strong>
+          <div class="muted">{{ history.header.age }} yrs • {{ history.header.sex }}</div>
+          <div class="muted">Contact: {{ history.header.contact }}</div>
+        </div>
+        {% for record in history.body %}
+        <div class="item">
+          <div><strong>{{ record.date | replace("T", " ") }}</strong></div>
+          <div class="muted">Temp: {{ record.temperature }} | Weight: {{ record.weight }} | Height: {{ record.height }}</div>
+          <div class="muted">BP: {{ record.blood_pressure }}</div>
+          <div><strong>Diagnostic:</strong> {{ record.diagnostic }}</div>
+          <div><strong>Prescription:</strong> {{ record.prescription }}</div>
+          <div><strong>Report:</strong> {{ record.report }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Modify medical record</h2>
+    <form method="post" action="/doctor/records/update">
+      <label>Record ID</label>
+      <input name="record_id" required />
+      <div class="inline">
+        <div style="flex:1;">
+          <label>Temperature</label>
+          <input name="temperature" type="number" step="0.1" />
+        </div>
+        <div style="flex:1;">
+          <label>Weight</label>
+          <input name="weight" type="number" step="0.1" />
+        </div>
+      </div>
+      <div class="inline">
+        <div style="flex:1;">
+          <label>Height</label>
+          <input name="height" type="number" step="0.01" />
+        </div>
+        <div style="flex:1;">
+          <label>Blood pressure</label>
+          <input name="blood_pressure" type="number" step="1" />
+        </div>
+      </div>
+      <label>Diagnostic</label>
+      <textarea name="diagnostic"></textarea>
+      <label>Prescription</label>
+      <textarea name="prescription"></textarea>
+      <label>Report</label>
+      <textarea name="report"></textarea>
+      <button type="submit" class="secondary">Update record</button>
+    </form>
+
+    <h3 style="margin-top: 18px;">Your records</h3>
+    <div class="stack">
+      {% if records %}
+        {% for record in records %}
+        <div class="item">
+          <div><strong>ID {{ record.id }}</strong> • {{ record.date | replace("T", " ") }}</div>
+          <div class="muted">Patient: {{ patient_lookup.get(record.patient_id, {}).get("name", "Unknown") }}</div>
+          <div class="muted">Diagnostic: {{ record.diagnostic }}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="muted">No records authored yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<script>
+  function fillMockData() {
+    document.getElementById("temp").value = "36.7";
+    document.getElementById("weight").value = "72.4";
+    document.getElementById("height").value = "1.74";
+    document.getElementById("bp").value = "118";
+    document.getElementById("diagnostic").value = "Mild seasonal allergies.";
+    document.getElementById("prescription").value = "Antihistamine, once daily.";
+    document.getElementById("report").value = "Patient reports nasal congestion. Vitals stable.";
+  }
+</script>
+{% endblock %}

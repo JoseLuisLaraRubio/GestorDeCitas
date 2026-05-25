@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Patient portal</h1>
+  <p class="muted">Book, reschedule, or cancel appointments and review your records.</p>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Book appointment</h2>
+    <form method="get" action="/patient">
+      <label>Doctor</label>
+      <select name="doctor_id" required>
+        <option value="">Select doctor</option>
+        {% for doctor in doctors %}
+          <option value="{{ doctor.id }}" {% if selected_doctor_id == doctor.id %}selected{% endif %}>
+            {{ doctor.name }} ({{ doctor.username }})
+          </option>
+        {% endfor %}
+      </select>
+      <label>Date</label>
+      <input type="date" name="date" value="{{ selected_date or '' }}" required />
+      <button type="submit" class="outline">Check availability</button>
+    </form>
+    <hr />
+    <form method="post" action="/patient/appointments">
+      <label>Doctor</label>
+      <select name="doctor_id" required>
+        <option value="">Select doctor</option>
+        {% for doctor in doctors %}
+          <option value="{{ doctor.id }}" {% if selected_doctor_id == doctor.id %}selected{% endif %}>
+            {{ doctor.name }} ({{ doctor.username }})
+          </option>
+        {% endfor %}
+      </select>
+      <label>Date</label>
+      <input type="date" name="date" value="{{ selected_date or '' }}" required />
+      <label>Time</label>
+      {% if available_slots %}
+      <div class="slot-list">
+        {% for slot in available_slots %}
+        <label class="slot">
+          <input type="radio" name="time" value="{{ slot }}" required /> {{ slot }}
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <input type="time" name="time" step="3600" required />
+      {% endif %}
+      <button type="submit">Book appointment</button>
+    </form>
+    <p class="footer-note">Appointments are hourly from 09:00 to 18:00.</p>
+  </div>
+
+  <div class="card">
+    <h2>Notifications</h2>
+    <div class="stack">
+      {% if notifications %}
+        {% for notification in notifications %}
+        <div class="item">
+          <div>{{ notification.contents }}</div>
+          <form method="post" action="/patient/notifications/{{ notification.id }}/delete">
+            <button type="submit" class="outline">Delete</button>
+          </form>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="muted">No notifications yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Upcoming appointments</h2>
+  <div class="stack">
+    {% if appointments %}
+      {% for appointment in appointments %}
+      <div class="item">
+        <div>
+          <strong>{{ appointment.date | replace("T", " ") }}</strong>
+          <div class="muted">Doctor: {{ doctor_lookup.get(appointment.doctor_id, {}).get("name", "Unknown") }}</div>
+        </div>
+        <div class="item-actions">
+          <form method="post" action="/patient/appointments/{{ appointment.id }}/reschedule" class="inline">
+            <input type="date" name="date" required />
+            <input type="time" name="time" step="3600" required />
+            <button type="submit" class="secondary">Reschedule</button>
+          </form>
+          <form method="post" action="/patient/appointments/{{ appointment.id }}/cancel">
+            <button type="submit" class="outline">Cancel</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="muted">No upcoming appointments.</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Medical records</h2>
+  {% if history %}
+    <div class="item">
+      <strong>{{ history.header.patient_name }}</strong>
+      <div class="muted">{{ history.header.age }} yrs • {{ history.header.sex }} • {{ history.header.contact }}</div>
+    </div>
+    <div class="stack">
+      {% if history.body %}
+        {% for record in history.body %}
+        <div class="item">
+          <div><strong>{{ record.date | replace("T", " ") }}</strong></div>
+          <div class="muted">Temp: {{ record.temperature }} | Weight: {{ record.weight }} | Height: {{ record.height }}</div>
+          <div class="muted">BP: {{ record.blood_pressure }}</div>
+          <div><strong>Diagnostic:</strong> {{ record.diagnostic }}</div>
+          <div><strong>Prescription:</strong> {{ record.prescription }}</div>
+          <div><strong>Report:</strong> {{ record.report }}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="muted">No medical records available.</div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="muted">Medical history not available.</div>
+  {% endif %}
+</section>
+{% endblock %}
