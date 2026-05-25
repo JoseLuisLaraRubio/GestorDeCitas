@@ -9,19 +9,16 @@ from pydantic import BaseModel
 from jose import JWTError, jwt
 from pwdlib import PasswordHash
 
-# --- CONSTANTS & CONFIGURATION ---
+# Config
 DB_LAYER_URL = os.getenv("DB_LAYER_URL", "http://127.0.0.1:8001")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "SUPER_SECRET_DISTRIBUTED_SYSTEMS_UADY_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-# --- MODERN PASSWORD HASHING INFRASTRUCTURE ---
-# Uses Argon2id as recommended by current FastAPI documentation standards
 password_hash_helper = PasswordHash.recommended()
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# --- REQUEST/RESPONSE SCHEMAS ---
+# Models
 class PatientRegistration(BaseModel):
     username: str
     password: str
@@ -60,7 +57,7 @@ class MedicalRecordRequest(BaseModel):
     report: str
 
 
-# --- AUTHENTICATION HELPERS ---
+# Helpers
 def verify_password(plain_password, hashed_password):
     return password_hash_helper.verify(plain_password, hashed_password)
 
@@ -127,7 +124,7 @@ async def verify_doctor(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
-# --- FASTAPI APP APPLICATION ---
+# App 
 app = FastAPI(title="Business Logic Layer - Appointment Manager (Pwdlib Migration)")
 
 @app.post("/token")
@@ -165,8 +162,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     raise HTTPException(status_code=400, detail="Invalid username or password credentials.")
 
 
-# --- 1. GESTIÓN DE PACIENTES ---
-
+# Patients
 @app.post("/patients/", status_code=201)
 async def register_patient(patient: PatientRegistration):
     # This now utilizes pwdlib cleanly, resolving the 72-byte value errors completely!
@@ -236,10 +232,9 @@ async def delete_patient(patient_id: int, current_user: dict = Depends(get_curre
         if resp.status_code == 404:
             raise HTTPException(status_code=404, detail="Patient profile not found.")
         return {"status": "Purged safely from persistent storage tier."}
+# End Patients
 
-
-# --- 2. GESTIÓN DE RESERVAS DE CITAS (CONCURRENCY LAYER) ---
-
+# Appointments
 @app.post("/appointments/", status_code=201)
 async def schedule_appointment(appointment: AppointmentRequest, current_user: dict = Depends(get_current_user)):
     if current_user["role"] == "patient" and current_user["internal_id"] != appointment.patient_id:
@@ -351,10 +346,9 @@ async def cancel_appointment(appointment_id: int, current_user: dict = Depends(g
             await client.post(f"{DB_LAYER_URL}/notifications/", json=notif_payload)
 
         return {"status": "Appointment canceled successfully."}
+# End Appointments
 
-
-# --- 3. REGISTRO DE LA HISTORIA CLÍNICA ---
-
+# Medical Records
 @app.post("/medical-records/", status_code=201)
 async def add_medical_record(record: MedicalRecordRequest, current_user: dict = Depends(verify_doctor)):
     db_payload = {
@@ -373,10 +367,9 @@ async def add_medical_record(record: MedicalRecordRequest, current_user: dict = 
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Could not store clinical notes securely.")
         return {"status": "Success. Notes stored securely."}
+# End Medical Records
 
-
-# --- 4. GENERACIÓN DE REPORTES ---
-
+# Reports and notifications
 @app.get("/reports/patients")
 async def report_patients(current_user: dict = Depends(verify_doctor)):
     async with httpx.AsyncClient() as client:
@@ -423,3 +416,5 @@ async def view_notifications(current_user: dict = Depends(get_current_user)):
         if resp.status_code != 200:
             return []
         return [n for n in resp.json() if n["patient_id"] == current_user["internal_id"]]
+
+# End Reports and notifications

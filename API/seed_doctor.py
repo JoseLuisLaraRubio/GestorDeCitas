@@ -6,8 +6,7 @@ DB_LAYER_URL = "http://127.0.0.1:8001"
 
 def seed_first_doctor():
     raw_password = "admin_password_2026"
-    
-    # Modern pwdlib hashing implementation
+
     password_hash_helper = PasswordHash.recommended()
     hashed = password_hash_helper.hash(raw_password)
     
